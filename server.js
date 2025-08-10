@@ -3,117 +3,65 @@ const cors = require('cors');
 const helmet = require('helmet');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 
-// Middlewares essenciais
+// Configuração segura do banco de dados
+const ensureDatabaseDirectory = (dbPath) => {
+    const dir = path.dirname(dbPath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+};
+
+// Caminho do banco de dados - funciona tanto local quanto no Render
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'data', 'database.db');
+ensureDatabaseDirectory(dbPath);
+
+// Conexão com tratamento de erro robusto
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+    if (err) {
+        console.error('Falha ao conectar ao banco de dados:', err.message);
+        process.exit(1); // Encerra o processo se não conseguir conectar
+    }
+    console.log(`Conectado ao banco de dados em ${dbPath}`);
+});
+
+// Middlewares
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Configuração do banco de dados
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'data', 'database.db');
-const db = new sqlite3.Database(dbPath);
-
-// Criar tabelas
+// Criar tabelas com verificação de erro
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`);
+    )`, (err) => {
+        if (err) console.error('Erro ao criar tabela users:', err.message);
+    });
     
     db.run(`CREATE TABLE IF NOT EXISTS jogadores (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT NOT NULL,
         pontuacao INTEGER DEFAULT 0
-    )`);
+    )`, (err) => {
+        if (err) console.error('Erro ao criar tabela jogadores:', err.message);
+    });
 });
 
-// Endpoint de teste
+// Endpoints (mantenha os mesmos do seu código anterior)
 app.get('/ping', (req, res) => {
-    res.json({ 
-        status: 'pong', 
-        server: 'Matchmaking Server',
-        timestamp: new Date().toISOString()
-    });
+    res.json({ status: 'online', timestamp: new Date().toISOString() });
 });
 
-// Endpoints de users
-app.post('/users', (req, res) => {
-    const { name, email } = req.body;
-    
-    if (!name || !email) {
-        return res.status(400).json({ error: 'Name and email are required' });
-    }
+// ... (mantenha todos os outros endpoints como estão)
 
-    db.run(
-        'INSERT INTO users (name, email) VALUES (?, ?)',
-        [name, email],
-        function(err) {
-            if (err) {
-                return res.status(500).json({ error: err.message });
-            }
-            res.status(201).json({
-                id: this.lastID,
-                name,
-                email
-            });
-        }
-    );
-});
-
-app.get('/users', (req, res) => {
-    db.all('SELECT * FROM users', [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        res.json(rows);
-    });
-});
-
-// Endpoints de jogadores
-app.post('/jogadores', (req, res) => {
-    const { nome, pontuacao } = req.body;
-    
-    if (!nome) {
-        return res.status(400).json({ error: 'Nome é obrigatório' });
-    }
-
-    db.run(
-        'INSERT INTO jogadores (nome, pontuacao) VALUES (?, ?)',
-        [nome, pontuacao || 0],
-        function(err) {
-            if (err) {
-                return res.status(500).json({ error: err.message });
-            }
-            res.status(201).json({
-                id: this.lastID,
-                nome,
-                pontuacao: pontuacao || 0
-            });
-        }
-    );
-});
-
-app.get('/jogadores', (req, res) => {
-    db.all('SELECT * FROM jogadores', [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        res.json(rows);
-    });
-});
-
-// Iniciar servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT}`);
-    console.log('Endpoints disponíveis:');
-    console.log(`- GET  /ping`);
-    console.log(`- POST /users`);
-    console.log(`- GET  /users`);
-    console.log(`- POST /jogadores`);
-    console.log(`- GET  /jogadores`);
+    console.log('Banco de dados:', dbPath);
 });
