@@ -2,135 +2,161 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const { Pool } = require('pg');
+const path = require('path');
 
+// Configuração do Express
 const app = express();
-
-// Configuração do PostgreSQL
-const pool = new Pool({
-  connectionString: "postgresql://bd:XmqvawsgHdEMIi6yts1vthuEMWC7E6qm@dpg-d2cfdhadbo4c73bn7690-a/bd_74h6",
-  ssl: {
-    rejectUnauthorized: false // Necessário para conexões externas
-  }
-});
 
 // Middlewares
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// Verificar conexão com o banco
+// Configuração do PostgreSQL (substitua pela sua URL)
+const pool = new Pool({
+  connectionString: "postgresql://bd:XmqvawsgHdEMIi6yts1vthuEMWC7E6qm@dpg-d2cfdhadbo4c73bn7690-a/bd_74h6",
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
+// Verificação de conexão com o banco
 pool.connect((err, client, release) => {
   if (err) {
-    return console.error('Erro ao conectar ao PostgreSQL:', err.stack);
+    console.error('Erro ao conectar ao PostgreSQL:', err.stack);
+    process.exit(1);
   }
-  console.log('Conectado ao PostgreSQL com sucesso!');
+  console.log('✅ Conectado ao PostgreSQL com sucesso!');
   release();
 });
 
-// Criar tabelas (executa apenas uma vez)
+// Criação das tabelas
 async function createTables() {
   try {
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS matchmaking_rooms (
         id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        room_name VARCHAR(64) NOT NULL UNIQUE,
+        player_id TEXT NOT NULL,
+        created_by VARCHAR(64) NOT NULL,
+        target_room VARCHAR(64) DEFAULT NULL,
+        last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS jogadores (
-        id SERIAL PRIMARY KEY,
-        nome TEXT NOT NULL,
-        pontuacao INTEGER DEFAULT 0
-      )
-    `);
-    
-    console.log('Tabelas criadas/verificadas com sucesso');
+    console.log('✅ Tabela matchmaking_rooms criada/verificada');
   } catch (err) {
-    console.error('Erro ao criar tabelas:', err);
+    console.error('❌ Erro ao criar tabelas:', err);
   }
 }
-
-createTables();
 
 // Endpoint de teste
 app.get('/ping', (req, res) => {
   res.json({ 
-    status: 'pong', 
+    status: 'online', 
     database: 'PostgreSQL',
     timestamp: new Date().toISOString() 
   });
 });
 
-// Endpoints para users
-app.post('/users', async (req, res) => {
-  const { name, email } = req.body;
+// Endpoint principal do matchmaking
+app.post('/matchmaking', async (req, res) => {
+  const { action, playerId } = req.body;
   
-  if (!name || !email) {
-    return res.status(400).json({ error: 'Name and email are required' });
-  }
-
   try {
-    const { rows } = await pool.query(
-      'INSERT INTO users (name, email) VALUES ($1, $2) RETURNING *',
-      [name, email]
-    );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    if (err.code === '23505') { // Violação de unique constraint
-      return res.status(409).json({ error: 'Email already exists' });
+    switch (action) {
+      case 'set_ready':
+        await handleSetReady(req, res);
+        break;
+      case 'check_room':
+        await handleCheckRoom(req, res);
+        break;
+      case 'unset_ready':
+        await handleUnsetReady(req, res);
+        break;
+      default:
+        res.status(400).json({ error: 'Ação inválida' });
     }
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/users', async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT * FROM users');
-    res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Erro no matchmaking:', err);
+    res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });
 
-// Endpoints para jogadores
-app.post('/jogadores', async (req, res) => {
-  const { nome, pontuacao } = req.body;
+// Função: Cria/Atualiza sala e tenta emparelhar
+async function handleSetReady(req, res) {
+  const { roomName, players, playerId } = req.body;
   
-  if (!nome) {
-    return res.status(400).json({ error: 'Nome é obrigatório' });
-  }
+  // Insere ou atualiza a sala
+  await pool.query(
+    `INSERT INTO matchmaking_rooms (room_name, player_id, created_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (room_name) 
+     DO UPDATE SET player_id = $2, last_update = CURRENT_TIMESTAMP`,
+    [roomName, players, playerId]
+  );
 
-  try {
-    const { rows } = await pool.query(
-      'INSERT INTO jogadores (nome, pontuacao) VALUES ($1, $2) RETURNING *',
-      [nome, pontuacao || 0]
+  // Procura por sala para emparelhar
+  const { rows } = await pool.query(
+    `SELECT room_name FROM matchmaking_rooms 
+     WHERE room_name != $1 AND target_room IS NULL 
+     ORDER BY last_update ASC LIMIT 1`,
+    [roomName]
+  );
+
+  if (rows.length > 0) {
+    const otherRoom = rows[0].room_name;
+    const targetRoomName = roomName;
+
+    // Atualiza ambas as salas
+    await pool.query(
+      `UPDATE matchmaking_rooms 
+       SET target_room = $1 
+       WHERE room_name IN ($2, $3)`,
+      [targetRoomName, roomName, otherRoom]
     );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
-app.get('/jogadores', async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT * FROM jogadores');
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({ status: "ready_set" });
+  } else {
+    res.json({ status: "waiting" });
   }
-});
+}
 
-// Iniciar servidor
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+// Função: Verifica se a sala está pronta
+async function handleCheckRoom(req, res) {
+  const { playerId } = req.body;
+  
+  const { rows } = await pool.query(
+    `SELECT target_room FROM matchmaking_rooms 
+     WHERE $1 = ANY(string_to_array(player_id, ','))`,
+    [playerId]
+  );
+
+  if (rows.length > 0 && rows[0].target_room) {
+    res.json({ status: "found", room: rows[0].target_room });
+  } else {
+    res.json({ status: "not_found" });
+  }
+}
+
+// Função: Remove sala quando o jogador desiste
+async function handleUnsetReady(req, res) {
+  const { playerId } = req.body;
+  
+  await pool.query(
+    'DELETE FROM matchmaking_rooms WHERE created_by = $1',
+    [playerId]
+  );
+  
+  res.json({ status: "unset" });
+}
+
+// Inicialização do servidor
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, async () => {
+  await createTables();
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log('📌 Endpoints disponíveis:');
   console.log('- GET  /ping');
-  console.log('- POST /users');
-  console.log('- GET  /users');
-  console.log('- POST /jogadores');
-  console.log('- GET  /jogadores');
+  console.log('- POST /matchmaking (actions: set_ready, check_room, unset_ready)');
 });
