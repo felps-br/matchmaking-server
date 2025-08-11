@@ -58,7 +58,7 @@ app.get('/ping', (req, res) => {
 });
 
 // Endpoint: Lista todas as salas (POST)
-app.post('/versalas', async (req, res) => {
+app.get('/versalas', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT room_name, player_id, created_by, target_room, last_update
