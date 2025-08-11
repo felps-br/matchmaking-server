@@ -10,6 +10,8 @@ const app = express();
 // Middlewares
 app.use(helmet());
 app.use(cors());
+app.use(express.json()); // para receber JSON no POST
+app.use(express.urlencoded({ extended: true })); // para receber form-data/urlencoded
 
 // Configuração do PostgreSQL
 const pool = new Pool({
@@ -46,7 +48,7 @@ async function createTables() {
   }
 }
 
-// Endpoint de teste
+// Endpoint de teste (mantive GET para ser rápido no navegador)
 app.get('/ping', (req, res) => {
   res.json({ 
     status: 'online', 
@@ -55,8 +57,8 @@ app.get('/ping', (req, res) => {
   });
 });
 
-// Endpoint: Lista todas as salas
-app.get('/versalas', async (req, res) => {
+// Endpoint: Lista todas as salas (POST)
+app.post('/versalas', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT room_name, player_id, created_by, target_room, last_update
@@ -74,10 +76,10 @@ app.get('/versalas', async (req, res) => {
   }
 });
 
-// Endpoint principal do matchmaking via GET
-app.get('/matchmaking', async (req, res) => {
-  const action = req.query.action;
-  const playerId = req.query.playerId;
+// Endpoint principal do matchmaking via POST
+app.post('/matchmaking', async (req, res) => {
+  const action = req.body.action;
+  const playerId = req.body.playerId;
 
   try {
     switch (action) {
@@ -101,9 +103,9 @@ app.get('/matchmaking', async (req, res) => {
 
 // Função: Cria/Atualiza sala e tenta emparelhar
 async function handleSetReady(req, res) {
-  const roomName = req.query.roomName;
-  const players = req.query.players;
-  const playerId = req.query.playerId;
+  const roomName = req.body.roomName;
+  const players = req.body.players;
+  const playerId = req.body.playerId;
 
   await pool.query(
     `INSERT INTO matchmaking_rooms (room_name, player_id, created_by)
@@ -139,7 +141,7 @@ async function handleSetReady(req, res) {
 
 // Função: Verifica se a sala está pronta
 async function handleCheckRoom(req, res) {
-  const playerId = req.query.playerId;
+  const playerId = req.body.playerId;
 
   const { rows } = await pool.query(
     `SELECT target_room FROM matchmaking_rooms 
@@ -156,7 +158,7 @@ async function handleCheckRoom(req, res) {
 
 // Função: Remove sala
 async function handleUnsetReady(req, res) {
-  const playerId = req.query.playerId;
+  const playerId = req.body.playerId;
 
   await pool.query(
     'DELETE FROM matchmaking_rooms WHERE created_by = $1',
@@ -171,9 +173,7 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
   await createTables();
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log('📌 Endpoints disponíveis:');
-  console.log('- GET /ping');
-  console.log('- GET /matchmaking?action=set_ready&roomName=Sala1&players=1,2&playerId=Jogador1');
-  console.log('- GET /matchmaking?action=check_room&playerId=Jogador1');
-  console.log('- GET /matchmaking?action=unset_ready&playerId=Jogador1');
+  console.log('📌 Endpoints disponíveis (via POST):');
+  console.log('- POST /versalas');
+  console.log('- POST /matchmaking (action=set_ready|check_room|unset_ready)');
 });
