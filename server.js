@@ -168,6 +168,23 @@ async function handleUnsetReady(req, res) {
   res.json({ status: "unset" });
 }
 
+// Função: Remove salas com mais de 5 minutos
+async function limparSalasAntigas() {
+  try {
+    const { rowCount } = await pool.query(`
+      DELETE FROM matchmaking_rooms
+      WHERE NOW() - last_update > INTERVAL '5 minutes'
+    `);
+    if (rowCount > 0) {
+      console.log(`🗑️ ${rowCount} sala(s) removida(s) por inatividade (5+ min).`);
+    }
+  } catch (err) {
+    console.error('Erro ao limpar salas antigas:', err);
+  }
+}
+
+// Inicia verificação a cada 5 minutos
+setInterval(limparSalasAntigas, 5 * 60 * 1000);
 // Inicialização
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
