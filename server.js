@@ -55,6 +55,25 @@ app.get('/ping', (req, res) => {
   });
 });
 
+// Endpoint: Lista todas as salas
+app.get('/versalas', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT room_name, player_id, created_by, target_room, last_update
+      FROM matchmaking_rooms
+      ORDER BY last_update DESC
+    `);
+
+    res.json({
+      total: rows.length,
+      salas: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar salas:', err);
+    res.status(500).json({ error: 'Erro interno ao buscar salas' });
+  }
+});
+
 // Endpoint principal do matchmaking via GET
 app.get('/matchmaking', async (req, res) => {
   const action = req.query.action;
