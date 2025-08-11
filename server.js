@@ -10,18 +10,14 @@ const app = express();
 // Middlewares
 app.use(helmet());
 app.use(cors());
-app.use(express.json({ limit: '10kb' }));
-app.use(express.urlencoded({ extended: true }));
 
-// Configuração do PostgreSQL (substitua pela sua URL)
+// Configuração do PostgreSQL
 const pool = new Pool({
   connectionString: "postgresql://bd:XmqvawsgHdEMIi6yts1vthuEMWC7E6qm@dpg-d2cfdhadbo4c73bn7690-a/bd_74h6",
-  ssl: {
-    rejectUnauthorized: false
-  }
+  ssl: { rejectUnauthorized: false }
 });
 
-// Verificação de conexão com o banco
+// Verificação de conexão
 pool.connect((err, client, release) => {
   if (err) {
     console.error('Erro ao conectar ao PostgreSQL:', err.stack);
@@ -59,10 +55,11 @@ app.get('/ping', (req, res) => {
   });
 });
 
-// Endpoint principal do matchmaking
-app.post('/matchmaking', async (req, res) => {
-  const { action, playerId } = req.body;
-  
+// Endpoint principal do matchmaking via GET
+app.get('/matchmaking', async (req, res) => {
+  const action = req.query.action;
+  const playerId = req.query.playerId;
+
   try {
     switch (action) {
       case 'set_ready':
@@ -85,9 +82,10 @@ app.post('/matchmaking', async (req, res) => {
 
 // Função: Cria/Atualiza sala e tenta emparelhar
 async function handleSetReady(req, res) {
-  const { roomName, players, playerId } = req.body;
-  
-  // Insere ou atualiza a sala
+  const roomName = req.query.roomName;
+  const players = req.query.players;
+  const playerId = req.query.playerId;
+
   await pool.query(
     `INSERT INTO matchmaking_rooms (room_name, player_id, created_by)
      VALUES ($1, $2, $3)
@@ -96,7 +94,6 @@ async function handleSetReady(req, res) {
     [roomName, players, playerId]
   );
 
-  // Procura por sala para emparelhar
   const { rows } = await pool.query(
     `SELECT room_name FROM matchmaking_rooms 
      WHERE room_name != $1 AND target_room IS NULL 
@@ -108,7 +105,6 @@ async function handleSetReady(req, res) {
     const otherRoom = rows[0].room_name;
     const targetRoomName = roomName;
 
-    // Atualiza ambas as salas
     await pool.query(
       `UPDATE matchmaking_rooms 
        SET target_room = $1 
@@ -124,8 +120,8 @@ async function handleSetReady(req, res) {
 
 // Função: Verifica se a sala está pronta
 async function handleCheckRoom(req, res) {
-  const { playerId } = req.body;
-  
+  const playerId = req.query.playerId;
+
   const { rows } = await pool.query(
     `SELECT target_room FROM matchmaking_rooms 
      WHERE $1 = ANY(string_to_array(player_id, ','))`,
@@ -139,24 +135,26 @@ async function handleCheckRoom(req, res) {
   }
 }
 
-// Função: Remove sala quando o jogador desiste
+// Função: Remove sala
 async function handleUnsetReady(req, res) {
-  const { playerId } = req.body;
-  
+  const playerId = req.query.playerId;
+
   await pool.query(
     'DELETE FROM matchmaking_rooms WHERE created_by = $1',
     [playerId]
   );
-  
+
   res.json({ status: "unset" });
 }
 
-// Inicialização do servidor
+// Inicialização
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, async () => {
   await createTables();
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log('📌 Endpoints disponíveis:');
-  console.log('- GET  /ping');
-  console.log('- POST /matchmaking (actions: set_ready, check_room, unset_ready)');
+  console.log('- GET /ping');
+  console.log('- GET /matchmaking?action=set_ready&roomName=Sala1&players=1,2&playerId=Jogador1');
+  console.log('- GET /matchmaking?action=check_room&playerId=Jogador1');
+  console.log('- GET /matchmaking?action=unset_ready&playerId=Jogador1');
 });
